@@ -1,18 +1,23 @@
 # Backchannel
 
-Backchannel archives your own WhatsApp and Signal message history on your Mac,
-into plain Markdown you own.
+Backchannel keeps your own WhatsApp and Signal history on your Mac as plain
+Markdown, and keeps it current.
 
-It is for people who want a durable, local, searchable copy of their own chat
-history. It reads the accounts you already have and writes files to your disk.
-Everything it does runs on your machine.
+Both sources land in the same place, in the same format, under one search index.
+A question you ask of your history does not have to be asked twice, or answered
+differently depending on which app the conversation happened in.
 
-The two sources do not cost the same to set up. Signal works with a stock
-`signal-cli` and one linking step. WhatsApp has no local API, so it needs a
-separate Go bridge process that you build yourself, and a stock build usually
-needs patching before media downloads work. If that is more than you want to
-take on, Signal alone is a complete setup. See
-[The WhatsApp bridge](docs/SETUP.md#the-whatsapp-bridge).
+The files are the interface. There is no database to query and no API to call:
+an agent with access to your disk can read the corpus directly, and `qmd` gives
+it semantic search across every conversation from both sources at once.
+Backchannel's job is to keep that substrate accurate and current.
+
+Everything runs on your machine. No cloud service, no account, no telemetry.
+
+Setup cost differs by source. Signal needs a stock `signal-cli` and one linking
+step. WhatsApp has no local API, so it needs a separate Go bridge process that
+you build yourself, and a stock build usually needs patching before media
+downloads work — see [The WhatsApp bridge](docs/SETUP.md#the-whatsapp-bridge).
 
 ## What it does
 
@@ -37,8 +42,6 @@ set to `1`, `true`, `yes`, or `on`. OCR is the newest capability and the least
 proven over long runs, so an install that nobody is watching does not run it by
 default. `backchannel describe --source whatsapp` works by hand whether or not
 the setting is enabled.
-
-No cloud service, no account, no telemetry. Everything happens on-device.
 
 ## Install
 
