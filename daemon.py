@@ -219,21 +219,22 @@ def build_jobs(settings: Settings, run=subprocess.run, now=None, registry=None):
     env = settings.as_env()
     registry = ChildProcesses() if registry is None else registry
     jobs = [
-        Job("capture-whatsapp", 300, lambda: _run_whatsapp_capture(settings, registry), now, long_running=True),
-        Job("capture-signal", 300, lambda: signal_cli.main([], env), now),
-        Job("derive-whatsapp", 900, lambda: derive_cli.main(["--source", "whatsapp"], env), now),
-        Job("derive-signal", 900, lambda: derive_cli.main(["--source", "signal"], env), now),
-        Job("transcribe-whatsapp", 3600, lambda: _run_transcribe(settings, "whatsapp", run), now),
-        Job("transcribe-signal", 3600, lambda: _run_transcribe(settings, "signal", run), now),
+        Job("capture-whatsapp", settings.capture_interval, lambda: _run_whatsapp_capture(settings, registry), now, long_running=True),
+        Job("capture-signal", settings.capture_interval, lambda: signal_cli.main([], env), now),
+        Job("derive-whatsapp", settings.derive_interval, lambda: derive_cli.main(["--source", "whatsapp"], env), now),
+        Job("derive-signal", settings.derive_interval, lambda: derive_cli.main(["--source", "signal"], env), now),
+        Job("transcribe-whatsapp", settings.transcribe_interval, lambda: _run_transcribe(settings, "whatsapp", run), now),
+        Job("transcribe-signal", settings.transcribe_interval, lambda: _run_transcribe(settings, "signal", run), now),
     ]
     if settings.describe_enabled:
         jobs += [
-            Job("describe-whatsapp", 3600, lambda: _run_describe(settings, "whatsapp", run), now),
-            Job("describe-signal", 3600, lambda: _run_describe(settings, "signal", run), now),
+            Job("describe-whatsapp", settings.describe_interval, lambda: _run_describe(settings, "whatsapp", run), now),
+            Job("describe-signal", settings.describe_interval, lambda: _run_describe(settings, "signal", run), now),
         ]
     jobs += [
-        Job("heartbeat-whatsapp", 21600, lambda: heartbeat_cli.check("whatsapp", env), now),
-        Job("heartbeat-signal", 21600, lambda: heartbeat_cli.check("signal", env), now),
+        Job("heartbeat-whatsapp", settings.heartbeat_interval, lambda: heartbeat_cli.check("whatsapp", env), now),
+        Job("heartbeat-signal", settings.heartbeat_interval, lambda: heartbeat_cli.check("signal", env), now),
+        # index runs at a time of day, not on an interval — see next_nightly_epoch.
         Job("index", 86400, lambda: index_cli.main([], env, run=run), next_nightly_epoch(now)),
     ]
     return jobs

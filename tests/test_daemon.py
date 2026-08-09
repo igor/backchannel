@@ -394,3 +394,61 @@ def test_describe_jobs_present_when_enabled(tmp_path):
     names = [j.name for j in daemon_module.build_jobs(_settings_with_describe(True, tmp_path))]
     assert "describe-whatsapp" in names
     assert "describe-signal" in names
+
+
+def test_intervals_default_to_the_shipped_schedule(tmp_path):
+    from config import Settings
+    import daemon as daemon_module
+    settings = Settings.from_environment(
+        {"BC_CORPUS_ROOT": str(tmp_path), "BC_DESCRIBE_ENABLED": "1"},
+        config_path=tmp_path / "missing.json")
+    by_name = {j.name: j.interval for j in daemon_module.build_jobs(settings)}
+    assert by_name["capture-whatsapp"] == 300
+    assert by_name["derive-whatsapp"] == 900
+    assert by_name["transcribe-whatsapp"] == 3600
+    assert by_name["describe-whatsapp"] == 3600
+    assert by_name["heartbeat-whatsapp"] == 21600
+    assert by_name["index"] == 86400
+
+
+def test_intervals_can_be_overridden(tmp_path):
+    from config import Settings
+    import daemon as daemon_module
+    settings = Settings.from_environment({
+        "BC_CORPUS_ROOT": str(tmp_path),
+        "BC_DESCRIBE_ENABLED": "1",
+        "BC_CAPTURE_INTERVAL": "60",
+        "BC_DERIVE_INTERVAL": "120",
+        "BC_TRANSCRIBE_INTERVAL": "7200",
+        "BC_DESCRIBE_INTERVAL": "7201",
+        "BC_HEARTBEAT_INTERVAL": "43200",
+    }, config_path=tmp_path / "missing.json")
+    by_name = {j.name: j.interval for j in daemon_module.build_jobs(settings)}
+    assert by_name["capture-signal"] == 60
+    assert by_name["derive-signal"] == 120
+    assert by_name["transcribe-signal"] == 7200
+    assert by_name["describe-signal"] == 7201
+    assert by_name["heartbeat-signal"] == 43200
+    # index is not interval-configurable and must keep its own schedule
+    assert by_name["index"] == 86400
+
+
+def test_a_bad_interval_raises_instead_of_falling_back(tmp_path):
+    # A daemon quietly running on the wrong schedule is worse than one that refuses to start.
+    import pytest
+    from config import Settings
+    for bad in ("nightly", "0", "-5", "1.5"):
+        with pytest.raises(ValueError):
+            Settings.from_environment(
+                {"BC_CORPUS_ROOT": str(tmp_path), "BC_DERIVE_INTERVAL": bad},
+                config_path=tmp_path / "missing.json")
+
+
+def test_intervals_round_trip_through_as_env(tmp_path):
+    from config import Settings
+    first = Settings.from_environment(
+        {"BC_CORPUS_ROOT": str(tmp_path), "BC_DERIVE_INTERVAL": "120"},
+        config_path=tmp_path / "missing.json")
+    second = Settings.from_environment(first.as_env(), config_path=tmp_path / "missing.json")
+    assert second.derive_interval == 120
+    assert second.capture_interval == first.capture_interval

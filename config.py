@@ -19,6 +19,19 @@ def _nonempty(values: Mapping[str, str], *names: str, default: str) -> str:
     return default
 
 
+def _positive_int(values: Mapping[str, str], name: str, default: int) -> int:
+    raw = values.get(name, "")
+    if not raw:
+        return default
+    try:
+        seconds = int(raw)
+    except ValueError:
+        raise ValueError(f"backchannel: {name} must be a whole number of seconds, got {raw!r}")
+    if seconds < 1:
+        raise ValueError(f"backchannel: {name} must be at least 1 second, got {seconds}")
+    return seconds
+
+
 def _config_values(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -47,6 +60,11 @@ class Settings:
     transcribe_wrapper: str
     log_root: Path
     describe_enabled: bool
+    capture_interval: int
+    derive_interval: int
+    transcribe_interval: int
+    describe_interval: int
+    heartbeat_interval: int
 
     @classmethod
     def from_environment(cls, env: Mapping[str, str] | None = None, config_path: Path | None = None) -> "Settings":
@@ -78,6 +96,16 @@ class Settings:
             # `backchannel describe` still runs by hand; this gates the scheduler only.
             describe_enabled=_nonempty(values, "BC_DESCRIBE_ENABLED", default="").strip().lower()
             in ("1", "true", "yes", "on"),
+            # Seconds between runs of each daemon job. The defaults are what the development
+            # machine has run on; they exist so an operator with a much larger archive, or a
+            # laptop on battery, has a lever. A bad value raises at startup rather than
+            # silently falling back — a daemon quietly running on the wrong schedule is worse
+            # than one that refuses to start.
+            capture_interval=_positive_int(values, "BC_CAPTURE_INTERVAL", 300),
+            derive_interval=_positive_int(values, "BC_DERIVE_INTERVAL", 900),
+            transcribe_interval=_positive_int(values, "BC_TRANSCRIBE_INTERVAL", 3600),
+            describe_interval=_positive_int(values, "BC_DESCRIBE_INTERVAL", 3600),
+            heartbeat_interval=_positive_int(values, "BC_HEARTBEAT_INTERVAL", 21600),
         )
 
     @staticmethod
@@ -116,4 +144,9 @@ class Settings:
             "BC_TRANSCRIBE_WRAPPER": self.transcribe_wrapper,
             "BC_LOG_ROOT": str(self.log_root),
             "BC_DESCRIBE_ENABLED": "1" if self.describe_enabled else "",
+            "BC_CAPTURE_INTERVAL": str(self.capture_interval),
+            "BC_DERIVE_INTERVAL": str(self.derive_interval),
+            "BC_TRANSCRIBE_INTERVAL": str(self.transcribe_interval),
+            "BC_DESCRIBE_INTERVAL": str(self.describe_interval),
+            "BC_HEARTBEAT_INTERVAL": str(self.heartbeat_interval),
         }
