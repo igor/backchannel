@@ -1,0 +1,21 @@
+[project]
+name = "backchannel"
+version = "0.1.0"
+description = "Local WhatsApp and Signal capture, Markdown derivation, voice-note transcription, and offline search."
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0", 'pyobjc-framework-Vision; sys_platform == "darwin"']
+
+[project.scripts]
+backchannel = "cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+py-modules = ["cli", "config", "daemon", "link", "provision"]
+
+[tool.setuptools.packages.find]
+include = ["sources*", "derive*", "transcribe*", "describe*", "index*", "heartbeat*", "msgvault_connector*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "derive/tests", "describe/tests", "transcribe/tests", "sources/signal/tests", "heartbeat/tests", "index/tests", "msgvault_connector/tests"]
