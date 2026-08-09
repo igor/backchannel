@@ -56,16 +56,6 @@ backchannel setup
 `backchannel setup` creates the config file if it doesn't exist, reports any
 missing dependencies, and downloads the small Whisper model.
 
-### Homebrew
-
-A tap is coming. Once it exists, install will be:
-
-```bash
-brew install backchannel
-```
-
-That command does not work yet — install from source until the tap ships.
-
 ## See the output first
 
 To see what the corpus looks like without linking an account, run the demo. It
