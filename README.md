@@ -7,6 +7,13 @@ It is for people who want a durable, local, searchable copy of their own chat
 history. It reads the accounts you already have and writes files to your disk.
 Everything it does runs on your machine.
 
+The two sources do not cost the same to set up. Signal works with a stock
+`signal-cli` and one linking step. WhatsApp has no local API, so it needs a
+separate Go bridge process that you build yourself, and a stock build usually
+needs patching before media downloads work. If that is more than you want to
+take on, Signal alone is a complete setup. See
+[The WhatsApp bridge](docs/SETUP.md#the-whatsapp-bridge).
+
 ## What it does
 
 Backchannel runs one supervisor process, `backchannel daemon`, that owns a
