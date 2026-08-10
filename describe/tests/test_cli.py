@@ -90,3 +90,34 @@ def test_signal_and_whatsapp_identical_ids_remain_separate(messages_db, tmp_path
     conn = extracts.connect(root / "image_text.db")
     assert conn.execute("SELECT source, text FROM image_text WHERE message_id='image-document' ORDER BY source").fetchall() == [("signal", "signal words"), ("whatsapp", "whatsapp words")]
     conn.close()
+
+
+def test_describe_wacli_finds_image_via_projected_local_path(tmp_path):
+    import sqlite3
+    store_dir = tmp_path / "wa"
+    img = tmp_path / "media-cache" / "message-IMG1.jpg"
+    img.parent.mkdir(parents=True); img.touch()
+    db = store_dir / "wacli.db"; db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE chats (jid TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT, last_message_ts INTEGER);"
+        "CREATE TABLE contacts (jid TEXT PRIMARY KEY, phone TEXT, push_name TEXT, full_name TEXT, updated_at INTEGER NOT NULL);"
+        "CREATE TABLE messages (rowid INTEGER PRIMARY KEY AUTOINCREMENT, chat_jid TEXT NOT NULL, msg_id TEXT NOT NULL, "
+        "sender_jid TEXT, ts INTEGER NOT NULL, from_me INTEGER NOT NULL, text TEXT, media_type TEXT, filename TEXT, "
+        "local_path TEXT, payload_purged_at INTEGER, UNIQUE(chat_jid, msg_id));")
+    conn.execute(
+        "INSERT INTO messages (chat_jid, msg_id, sender_jid, ts, from_me, text, media_type, filename, local_path) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("447700900107@s.whatsapp.net", "IMG1", "447700900107@s.whatsapp.net", 1752400000, 0, "", "image", "photo.jpg", str(img)))
+    conn.commit(); conn.close()
+
+    env = {"BC_WHATSAPP_BACKEND": "wacli", "BC_WACLI_STORE": str(store_dir),
+           "BC_CORPUS_ROOT": str(tmp_path / "corpus")}
+    lines = [("fixture caption long enough to count", 0.9),
+             ("fixture second line long enough too", 0.8),
+             ("fixture third line long enough now", 0.7)]
+    assert cli.main(["--source", "whatsapp"], env, recognize_fn=lambda _: lines) == 1
+    conn = extracts.connect(tmp_path / "corpus" / "image_text.db")
+    status = dict(conn.execute("SELECT message_id, status FROM image_text")).get("IMG1")
+    conn.close()
+    assert status == "ok"

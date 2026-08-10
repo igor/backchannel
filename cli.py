@@ -10,11 +10,27 @@ from derive import cli as derive_cli
 from describe import cli as describe_cli
 from heartbeat import cli as heartbeat_cli
 from index import cli as index_cli
-from sources.signal import cli as signal_cli
 from transcribe import cli as transcribe_cli
 
+# Signal is an optional source. The public WhatsApp-only export omits sources/signal/
+# entirely; this guarded import is what lets the command degrade to WhatsApp-only instead of
+# ImportError-ing at startup. SIGNAL_AVAILABLE is the single truth — SOURCES/LINK_SOURCES below
+# and the daemon's signal jobs are derived from it, so the command degrades with no export-time
+# code patching. main() reads SOURCES as a module global, so a test simulates absence by
+# patching this one tuple.
+try:
+    from sources.signal import cli as signal_cli
+except ModuleNotFoundError as exc:
+    # Only the absent-tree case (the public WhatsApp-only export omits sources/signal/)
+    # degrades. A PRESENT-but-broken signal package must fail loudly, not silently
+    # disable itself, so any other missing module propagates.
+    if exc.name not in ("sources", "sources.signal"):
+        raise
+    signal_cli = None
 
-SOURCES = ("whatsapp", "signal")
+SIGNAL_AVAILABLE = signal_cli is not None
+SOURCES = ("whatsapp", "signal") if SIGNAL_AVAILABLE else ("whatsapp",)
+LINK_SOURCES = ("signal",) if SIGNAL_AVAILABLE else ()
 
 
 def _settings_env(env):
@@ -33,7 +49,7 @@ def main(argv=None, env=None, run=subprocess.run) -> int:
             command.add_argument("--dry-run", action="store_true")
     commands.add_parser("index")
     link = commands.add_parser("link")
-    link.add_argument("source", choices=("signal",))
+    link.add_argument("source", choices=LINK_SOURCES)
     setup = commands.add_parser("setup")
     setup.add_argument("--config")
     setup.add_argument("--model", choices=("small", "large"), default="small")

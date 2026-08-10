@@ -220,3 +220,34 @@ def test_scan_sidecar_dirty_uses_separate_cursors_per_pipeline(store_db, tmp_pat
     assert max_transcripts == 1
     assert max_image_text == 1
 
+
+def test_media_path_absolute_filename_wins_over_media_root(tmp_path):
+    # wacli projects an absolute local_path; it must resolve to itself regardless of media_root.
+    import pathlib
+    resolved = store.media_path(tmp_path / "media", "chat@x", "/abs/store/message-P1.jpg")
+    assert resolved == pathlib.Path("/abs/store/message-P1.jpg")
+
+
+def test_media_path_relative_filename_uses_the_bridge_convention(tmp_path):
+    # The bridge stores a basename under <media_root>/<chat_jid>/<filename>.
+    resolved = store.media_path(tmp_path / "media", "chat@x", "audio_1.ogg")
+    assert resolved == tmp_path / "media" / "chat@x" / "audio_1.ogg"
+
+
+def test_save_watermark_persists_the_wacli_rowid_cursor(tmp_path):
+    import json
+    path = tmp_path / "state.json"
+    dt = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    store.save_watermark(path, dt, wacli_rowid=42)
+    raw = json.loads(path.read_text())
+    assert raw["wacli_rowid_cursor"] == 42
+
+
+def test_save_watermark_omits_cursor_when_none_so_bridge_path_is_unchanged(tmp_path):
+    import json
+    path = tmp_path / "state.json"
+    dt = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    store.save_watermark(path, dt)
+    raw = json.loads(path.read_text())
+    assert "wacli_rowid_cursor" not in raw
+

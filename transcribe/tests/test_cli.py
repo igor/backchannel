@@ -90,3 +90,33 @@ def test_main_marks_empty_on_blank_transcript(messages_db, tmp_path):
     rows = {r[0]: r for r in tconn.execute(
         "SELECT message_id, status, text FROM transcripts WHERE source='whatsapp'").fetchall()}
     assert rows["A1"] == ("A1", "empty", "")
+
+
+def test_transcribe_wacli_finds_audio_via_projected_local_path(tmp_path):
+    import sqlite3
+    store_dir = tmp_path / "wa"
+    ogg = tmp_path / "media-cache" / "voice-M1.ogg"
+    ogg.parent.mkdir(parents=True); ogg.touch()
+    db = store_dir / "wacli.db"; db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE chats (jid TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT, last_message_ts INTEGER);"
+        "CREATE TABLE contacts (jid TEXT PRIMARY KEY, phone TEXT, push_name TEXT, full_name TEXT, updated_at INTEGER NOT NULL);"
+        "CREATE TABLE messages (rowid INTEGER PRIMARY KEY AUTOINCREMENT, chat_jid TEXT NOT NULL, msg_id TEXT NOT NULL, "
+        "sender_jid TEXT, ts INTEGER NOT NULL, from_me INTEGER NOT NULL, text TEXT, media_type TEXT, filename TEXT, "
+        "local_path TEXT, payload_purged_at INTEGER, UNIQUE(chat_jid, msg_id));")
+    conn.execute(
+        "INSERT INTO messages (chat_jid, msg_id, sender_jid, ts, from_me, text, media_type, filename, local_path) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("447700900107@s.whatsapp.net", "M1", "447700900107@s.whatsapp.net", 1752400000, 0, "", "audio", "voice.ogg", str(ogg)))
+    conn.commit(); conn.close()
+
+    root = tmp_path / "corpus"
+    env = {"BC_WHATSAPP_BACKEND": "wacli", "BC_WACLI_STORE": str(store_dir),
+           "BC_CORPUS_ROOT": str(root), "BC_DERIVE_WORK": str(tmp_path / "w")}
+    count = cli.main(["--source", "whatsapp"], env=env, transcribe_fn=lambda p: ("hallo", "de"))
+    assert count == 1
+    tconn = transcripts.connect(root / "transcripts.db")
+    status = dict(tconn.execute("SELECT message_id, status FROM transcripts")).get("M1")
+    tconn.close()
+    assert status == "ok"

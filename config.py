@@ -11,6 +11,20 @@ from typing import Mapping
 DEFAULT_CONFIG_PATH = Path("~/.config/backchannel/config.json").expanduser()
 
 
+_WHATSAPP_BACKENDS = ("bridge", "wacli")
+
+
+def resolve_backend(raw: str) -> str:
+    """Validate a BC_WHATSAPP_BACKEND value. A typo must fail loudly, never silently
+    select the bridge — every consumer (Settings, derive, transcribe, describe) resolves
+    through here so the vocabulary is enforced once."""
+    backend = (raw or "bridge").strip().lower()
+    if backend not in _WHATSAPP_BACKENDS:
+        raise ValueError(
+            f"BC_WHATSAPP_BACKEND must be one of {', '.join(_WHATSAPP_BACKENDS)}; got {raw!r}")
+    return backend
+
+
 def _nonempty(values: Mapping[str, str], *names: str, default: str) -> str:
     for name in names:
         value = values.get(name, "")
@@ -48,6 +62,9 @@ class Settings:
     whatsapp_media: Path
     whatsapp_contacts: Path
     whatsapp_bridge_bin: str
+    whatsapp_backend: str
+    wacli_bin: str
+    wacli_store: Path
     signal_store_root: Path
     signal_store: Path
     signal_account: str
@@ -80,6 +97,9 @@ class Settings:
             whatsapp_media=Path(_nonempty(values, "BC_WHATSAPP_MEDIA", default=str(whatsapp_store.parent))).expanduser(),
             whatsapp_contacts=Path(_nonempty(values, "BC_WHATSAPP_CONTACTS", default=str(whatsapp_store.parent / "whatsapp.db"))).expanduser(),
             whatsapp_bridge_bin=_nonempty(values, "BC_WHATSAPP_BRIDGE_BIN", default="whatsapp-bridge"),
+            whatsapp_backend=resolve_backend(_nonempty(values, "BC_WHATSAPP_BACKEND", default="bridge")),
+            wacli_bin=_nonempty(values, "BC_WACLI_BIN", default="wacli"),
+            wacli_store=Path(_nonempty(values, "BC_WACLI_STORE", default="~/.wacli")).expanduser(),
             signal_store_root=signal_root,
             signal_store=Path(_nonempty(values, "BC_SIGNAL_STORE", default=str(signal_root / "messages.db"))).expanduser(),
             signal_account=_nonempty(values, "BC_SIGNAL_ACCOUNT", default=""),
@@ -132,6 +152,9 @@ class Settings:
             "BC_WHATSAPP_MEDIA": str(self.whatsapp_media),
             "BC_WHATSAPP_CONTACTS": str(self.whatsapp_contacts),
             "BC_WHATSAPP_BRIDGE_BIN": self.whatsapp_bridge_bin,
+            "BC_WHATSAPP_BACKEND": self.whatsapp_backend,
+            "BC_WACLI_BIN": self.wacli_bin,
+            "BC_WACLI_STORE": str(self.wacli_store),
             "BC_SIGNAL_STORE_ROOT": str(self.signal_store_root),
             "BC_SIGNAL_STORE": str(self.signal_store),
             "BC_SIGNAL_ACCOUNT": self.signal_account,

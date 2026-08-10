@@ -25,7 +25,7 @@
 ## Configuration
 
 See [CONFIGURATION.md](CONFIGURATION.md). The public settings are `BC_CORPUS_ROOT`,
-per-source stores, `BC_SIGNAL_ACCOUNT`, `BC_WHISPER_MODEL`, and optional
+per-source stores, `BC_WHATSAPP_BACKEND`, `BC_WHISPER_MODEL`, and optional
 `BC_TRANSCRIBE_WRAPPER`. qmd is optional for capture but required for `backchannel index`.
 
 ## Connectors

@@ -11,11 +11,9 @@ value wins; then the config file; then a portable default.
 | `BC_WHATSAPP_MEDIA` | store parent | WhatsApp media root |
 | `BC_WHATSAPP_CONTACTS` | `~/store/whatsapp.db` | WhatsApp contact store |
 | `BC_WHATSAPP_BRIDGE_BIN` | `whatsapp-bridge` | separate Go bridge binary |
-| `BC_SIGNAL_STORE_ROOT` | `~/.local/share/backchannel/signal` | Signal store directory |
-| `BC_SIGNAL_STORE` | `<signal root>/messages.db` | Signal source store |
-| `BC_SIGNAL_ACCOUNT` | empty | Signal linked account, required for capture |
-| `BC_SIGNAL_CLI_BIN` | `signal-cli` | Signal command |
-| `BC_SIGNAL_CLI_DATA` | `~/.local/share/signal-cli/data` | Signal client data |
+| `BC_WHATSAPP_BACKEND` | `bridge` | `bridge` or `wacli` |
+| `BC_WACLI_BIN` | `wacli` | wacli executable (wacli backend) |
+| `BC_WACLI_STORE` | `~/.wacli` | wacli store directory (wacli backend) |
 | `BC_WHISPER_MODEL` | `~/whisper-models/ggml-small.bin` | Whisper GGML model |
 | `BC_WHISPER_BIN` | `whisper-cli` | Whisper command |
 | `BC_FFMPEG_BIN` | `ffmpeg` | audio conversion command |
@@ -68,3 +66,5 @@ the default, so a typo cannot leave it quietly running on the wrong schedule.
 
 `backchannel index` is not on this list. It runs once a night at a fixed local time rather than
 on an interval.
+
+The Signal source present in the tree keeps its settings undocumented until its release.

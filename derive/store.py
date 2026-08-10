@@ -27,6 +27,14 @@ def connect_ro(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 
 
+def media_path(media_root: Path, chat_jid: str, filename: str) -> Path:
+    """Resolve a media file. wacli projects an absolute local_path into filename; the
+    bridge stores a basename under <media_root>/<chat_jid>/<filename>. An absolute
+    filename wins, so both backends resolve through one rule with no backend flag."""
+    f = Path(filename)
+    return f if f.is_absolute() else Path(media_root) / chat_jid / f
+
+
 def parse_ts(raw: str) -> datetime:
     """Parse the bridge format, e.g. '2026-06-15 15:26:28+02:00'."""
     s = (raw or "").strip()
@@ -156,7 +164,8 @@ def load_image_text_watermark(path: Path) -> Optional[int]:
 
 
 def save_watermark(path: Path, dt_utc: datetime, transcripts_rev: Optional[int] = None,
-                    image_text_rev: Optional[int] = None) -> None:
+                    image_text_rev: Optional[int] = None, wacli_rowid: Optional[int] = None,
+                    wacli_anchor: Optional[str] = None) -> None:
     from derive.corpus import atomic_write  # late import avoids a cycle
     state = _load_state_json(path)
     state["watermark_utc"] = dt_utc.isoformat()
@@ -164,6 +173,10 @@ def save_watermark(path: Path, dt_utc: datetime, transcripts_rev: Optional[int] 
         state["sidecar_transcripts_watermark_rev"] = transcripts_rev
     if image_text_rev is not None:
         state["sidecar_image_text_watermark_rev"] = image_text_rev
+    if wacli_rowid is not None:
+        state["wacli_rowid_cursor"] = wacli_rowid
+    if wacli_anchor is not None:
+        state["wacli_cursor_anchor"] = wacli_anchor
     state["derive_version"] = __version__
     atomic_write(Path(path), __import__("json").dumps(state, indent=2) + "\n")
 

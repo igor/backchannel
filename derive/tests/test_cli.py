@@ -201,3 +201,89 @@ def test_cli_renders_image_text_and_indexes_below_threshold_text(store_db, tmp_p
     text = (root / "whatsapp" / "groups" / "sample-group" / "2026-06-15.md").read_text()
     assert "fixture searchable image text" in text
     assert "**09:12" in text and "[image]" in text
+
+
+def _seed_wacli_store(store_dir):
+    import sqlite3
+    db = store_dir / "wacli.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE chats (jid TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT, last_message_ts INTEGER);"
+        "CREATE TABLE contacts (jid TEXT PRIMARY KEY, phone TEXT, push_name TEXT, full_name TEXT, updated_at INTEGER NOT NULL);"
+        "CREATE TABLE messages (rowid INTEGER PRIMARY KEY AUTOINCREMENT, chat_jid TEXT NOT NULL, msg_id TEXT NOT NULL, "
+        "sender_jid TEXT, ts INTEGER NOT NULL, from_me INTEGER NOT NULL, text TEXT, media_type TEXT, filename TEXT, "
+        "local_path TEXT, revoked INTEGER NOT NULL DEFAULT 0, deleted_for_me INTEGER NOT NULL DEFAULT 0, "
+        "payload_purged_at INTEGER, UNIQUE(chat_jid, msg_id));")
+    conn.execute("INSERT INTO chats VALUES ('447700900107@s.whatsapp.net','dm','Fixture Contact',1752400000)")
+    conn.execute("INSERT INTO contacts VALUES ('447700900107@s.whatsapp.net','447700900107','fixi','Fixture Contact',1752400000)")
+    return conn
+
+
+def test_resolve_config_wacli_backend_points_at_wacli_db(tmp_path):
+    wacli_store = tmp_path / "wa"
+    env = {
+        "BC_WHATSAPP_BACKEND": "wacli",
+        "BC_WACLI_STORE": str(wacli_store),
+        "BC_CORPUS_ROOT": str(tmp_path / "c"),
+        "BC_DERIVE_WORK": str(tmp_path / "w"),
+    }
+    cfg = cli.resolve_config("whatsapp", env)
+    assert cfg.backend == "wacli"
+    assert cfg.store_db == wacli_store / "wacli.db"
+    assert cfg.contacts_db is None
+    assert cfg.wacli_store == wacli_store
+
+
+def test_derive_wacli_rebuild_writes_corpus_and_advances_cursor(tmp_path):
+    import datetime as _dt
+    import json
+    conn = _seed_wacli_store(tmp_path / "wa")
+    conn.execute(
+        "INSERT INTO messages (chat_jid, msg_id, sender_jid, ts, from_me, text, media_type, filename, local_path) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("447700900107@s.whatsapp.net", "M1", "447700900107@s.whatsapp.net", 1752400000, 0, "hello wacli", "", "", None))
+    conn.commit(); conn.close()
+
+    root = tmp_path / "corpus"
+    env = {"BC_WHATSAPP_BACKEND": "wacli", "BC_WACLI_STORE": str(tmp_path / "wa"),
+           "BC_CORPUS_ROOT": str(root), "BC_DERIVE_WORK": str(tmp_path / "w")}
+    written = cli.main(["--source", "whatsapp", "--rebuild"], env=env)
+    assert written > 0
+
+    expected_day = _dt.datetime.fromtimestamp(1752400000, tz=_dt.timezone.utc).astimezone().date()
+    day_file = root / "whatsapp" / "dms" / "fixture-contact" / f"{expected_day.isoformat()}.md"
+    assert day_file.exists()
+    assert "hello wacli" in day_file.read_text()
+    state = json.loads((tmp_path / "w" / "whatsapp" / "state.json").read_text())
+    assert state["wacli_rowid_cursor"] == 1
+
+
+def test_derive_wacli_incremental_advances_cursor_for_backdated_rows(tmp_path):
+    # A backdated row (older ts) arriving later as a new rowid must still be derived — the
+    # case a timestamp watermark gets permanently wrong for wacli history sync.
+    import datetime as _dt
+    import sqlite3
+    conn = _seed_wacli_store(tmp_path / "wa")
+    conn.execute(
+        "INSERT INTO messages (chat_jid, msg_id, sender_jid, ts, from_me, text, media_type, filename, local_path) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("447700900107@s.whatsapp.net", "M1", "447700900107@s.whatsapp.net", 1752400000, 0, "first", "", "", None))
+    conn.commit(); conn.close()
+
+    root = tmp_path / "corpus"
+    env = {"BC_WHATSAPP_BACKEND": "wacli", "BC_WACLI_STORE": str(tmp_path / "wa"),
+           "BC_CORPUS_ROOT": str(root), "BC_DERIVE_WORK": str(tmp_path / "w")}
+    cli.main(["--source", "whatsapp"], env=env)  # first run derives everything; cursor -> 1
+
+    conn = sqlite3.connect(tmp_path / "wa" / "wacli.db")
+    conn.execute(
+        "INSERT INTO messages (chat_jid, msg_id, sender_jid, ts, from_me, text, media_type, filename, local_path) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("447700900107@s.whatsapp.net", "M2", "447700900107@s.whatsapp.net", 1700000000, 0, "backdated", "", "", None))
+    conn.commit(); conn.close()
+
+    written = cli.main(["--source", "whatsapp"], env=env)
+    assert written > 0
+    expected_day = _dt.datetime.fromtimestamp(1700000000, tz=_dt.timezone.utc).astimezone().date()
+    assert (root / "whatsapp" / "dms" / "fixture-contact" / f"{expected_day.isoformat()}.md").exists()

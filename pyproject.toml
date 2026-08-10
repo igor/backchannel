@@ -18,4 +18,4 @@ py-modules = ["cli", "config", "daemon", "link", "provision"]
 include = ["sources*", "derive*", "transcribe*", "describe*", "index*", "heartbeat*", "msgvault_connector*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "derive/tests", "describe/tests", "transcribe/tests", "sources/signal/tests", "heartbeat/tests", "index/tests", "msgvault_connector/tests"]
+testpaths = ["tests", "derive/tests", "describe/tests", "transcribe/tests", "heartbeat/tests", "index/tests", "msgvault_connector/tests"]

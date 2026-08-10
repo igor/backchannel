@@ -2,6 +2,8 @@
 import argparse
 import logging
 import os
+
+import config
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,9 +20,17 @@ def _pick(env, canonical, default):
 
 def resolve_config(source: str, env) -> dict:
     root = Path(_pick(env, "BC_CORPUS_ROOT", os.path.expanduser("~/.local/share/backchannel/corpus")))
+    backend = "bridge"
+    wacli_store = None
     if source == "whatsapp":
-        store_db = Path(_pick(env, "BC_WHATSAPP_STORE", os.path.expanduser("~/store/messages.db")))
-        media_root = Path(_pick(env, "BC_WHATSAPP_MEDIA", str(store_db.parent)))
+        if config.resolve_backend(_pick(env, "BC_WHATSAPP_BACKEND", "bridge")) == "wacli":
+            backend = "wacli"
+            wacli_store = Path(_pick(env, "BC_WACLI_STORE", os.path.expanduser("~/.wacli"))).expanduser()
+            store_db = wacli_store / "wacli.db"
+            media_root = wacli_store / "media"
+        else:
+            store_db = Path(_pick(env, "BC_WHATSAPP_STORE", os.path.expanduser("~/store/messages.db")))
+            media_root = Path(_pick(env, "BC_WHATSAPP_MEDIA", str(store_db.parent)))
         model = _pick(env, "BC_WHISPER_MODEL", os.path.expanduser("~/whisper-models/ggml-large-v3-turbo.bin"))
     else:
         store_root = Path(_pick(env, "BC_SIGNAL_STORE_ROOT", os.path.expanduser("~/.local/share/backchannel/signal")))
@@ -36,6 +46,8 @@ def resolve_config(source: str, env) -> dict:
         "model": model,
         "whisper_bin": _pick(env, "BC_WHISPER_BIN", "whisper-cli"),
         "ffmpeg_bin": _pick(env, "BC_FFMPEG_BIN", "ffmpeg"),
+        "backend": backend,
+        "wacli_store": wacli_store,
     }
 
 
@@ -50,7 +62,11 @@ def main(argv=None, env=None, transcribe_fn=None) -> int:
     if not cfg["store_db"].exists():
         raise SystemExit(f"backchannel-transcribe: {cfg['source']} store DB not found at {cfg['store_db']}")
 
-    derive_store.snapshot_db(cfg["store_db"], cfg["snapshot"])
+    if cfg["backend"] == "wacli":
+        from derive import wacli
+        wacli.project(cfg["wacli_store"], cfg["snapshot"])
+    else:
+        derive_store.snapshot_db(cfg["store_db"], cfg["snapshot"])
     conn = derive_store.connect_ro(cfg["snapshot"])
     audio = store.audio_messages(conn)
     tconn = transcripts.connect(cfg["transcripts_db"])
@@ -62,7 +78,7 @@ def main(argv=None, env=None, transcribe_fn=None) -> int:
     for mid, chat_jid, filename in audio:
         if mid in done:
             continue
-        ogg = cfg["media_root"] / chat_jid / filename
+        ogg = derive_store.media_path(cfg["media_root"], chat_jid, filename)
         if not filename or not ogg.exists():
             transcripts.upsert(tconn, cfg["source"], mid, chat_jid, "", "", "", "missing", now); counts["missing"] += 1; continue
         try:

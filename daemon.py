@@ -17,8 +17,23 @@ from config import Settings
 from derive import cli as derive_cli
 from heartbeat import cli as heartbeat_cli
 from index import cli as index_cli
-from sources.signal import cli as signal_cli
 from transcribe import cli as transcribe_cli
+
+# Mirror cli.py's guarded import. daemon.py imports each of its entrypoint dependencies
+# directly (derive/heartbeat/index/transcribe); a cross-module import of cli.SIGNAL_AVAILABLE
+# would be the only such coupling and adds nothing — the ImportError is deterministic, so two
+# guarded imports are the matching codebase pattern.
+try:
+    from sources.signal import cli as signal_cli
+except ModuleNotFoundError as exc:
+    # Only the absent-tree case (the public WhatsApp-only export omits sources/signal/)
+    # degrades. A PRESENT-but-broken signal package must fail loudly, not silently
+    # disable itself, so any other missing module propagates.
+    if exc.name not in ("sources", "sources.signal"):
+        raise
+    signal_cli = None
+
+SIGNAL_AVAILABLE = signal_cli is not None
 
 
 log = logging.getLogger("backchannel.daemon")
@@ -214,29 +229,56 @@ def _run_whatsapp_capture(settings, registry, popen_factory=subprocess.Popen):
         raise RuntimeError(f"backchannel capture whatsapp exited {returncode}")
 
 
+def _run_wacli_capture(settings, run=subprocess.run):
+    # `wacli sync --once` is bounded: it syncs until idle and exits, unlike the bridge binary
+    # which runs forever, so this job is not long_running. --presence-mode quiet keeps the
+    # archive account from broadcasting presence each tick — verified present as a sync-level
+    # flag in `wacli sync --help` (not gated by --once). --store maps BC_WACLI_STORE onto
+    # wacli's global --store flag. Verified against wacli 0.16.0.
+    argv = [
+        settings.wacli_bin, "--store", str(settings.wacli_store),
+        "sync", "--once", "--idle-exit", "30s", "--presence-mode", "quiet",
+    ]
+    result = run(argv, env=_child_env(settings), text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(f"backchannel capture whatsapp (wacli) exited {result.returncode}")
+
+
 def build_jobs(settings: Settings, run=subprocess.run, now=None, registry=None):
     now = time.time() if now is None else now
     env = settings.as_env()
     registry = ChildProcesses() if registry is None else registry
+    if settings.whatsapp_backend == "wacli":
+        capture_whatsapp = Job("capture-whatsapp", settings.capture_interval,
+                               lambda: _run_wacli_capture(settings, run), now)
+    else:
+        capture_whatsapp = Job("capture-whatsapp", settings.capture_interval,
+                               lambda: _run_whatsapp_capture(settings, registry), now, long_running=True)
     jobs = [
-        Job("capture-whatsapp", settings.capture_interval, lambda: _run_whatsapp_capture(settings, registry), now, long_running=True),
-        Job("capture-signal", settings.capture_interval, lambda: signal_cli.main([], env), now),
+        capture_whatsapp,
         Job("derive-whatsapp", settings.derive_interval, lambda: derive_cli.main(["--source", "whatsapp"], env), now),
-        Job("derive-signal", settings.derive_interval, lambda: derive_cli.main(["--source", "signal"], env), now),
         Job("transcribe-whatsapp", settings.transcribe_interval, lambda: _run_transcribe(settings, "whatsapp", run), now),
-        Job("transcribe-signal", settings.transcribe_interval, lambda: _run_transcribe(settings, "signal", run), now),
     ]
-    if settings.describe_enabled:
+    # Every *-signal job is gated on the optional Signal source being importable, so a
+    # WhatsApp-only install schedules only whatsapp + index and never raises from a missing
+    # package or a missing signal store.
+    if SIGNAL_AVAILABLE:
         jobs += [
-            Job("describe-whatsapp", settings.describe_interval, lambda: _run_describe(settings, "whatsapp", run), now),
-            Job("describe-signal", settings.describe_interval, lambda: _run_describe(settings, "signal", run), now),
+            Job("capture-signal", settings.capture_interval, lambda: signal_cli.main([], env), now),
+            Job("derive-signal", settings.derive_interval, lambda: derive_cli.main(["--source", "signal"], env), now),
+            Job("transcribe-signal", settings.transcribe_interval, lambda: _run_transcribe(settings, "signal", run), now),
         ]
+    if settings.describe_enabled:
+        jobs.append(Job("describe-whatsapp", settings.describe_interval, lambda: _run_describe(settings, "whatsapp", run), now))
+        if SIGNAL_AVAILABLE:
+            jobs.append(Job("describe-signal", settings.describe_interval, lambda: _run_describe(settings, "signal", run), now))
     jobs += [
         Job("heartbeat-whatsapp", settings.heartbeat_interval, lambda: heartbeat_cli.check("whatsapp", env), now),
-        Job("heartbeat-signal", settings.heartbeat_interval, lambda: heartbeat_cli.check("signal", env), now),
         # index runs at a time of day, not on an interval — see next_nightly_epoch.
         Job("index", 86400, lambda: index_cli.main([], env, run=run), next_nightly_epoch(now)),
     ]
+    if SIGNAL_AVAILABLE:
+        jobs.append(Job("heartbeat-signal", settings.heartbeat_interval, lambda: heartbeat_cli.check("signal", env), now))
     return jobs
 
 

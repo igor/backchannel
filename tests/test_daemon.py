@@ -109,9 +109,9 @@ def test_transcribe_job_honours_configured_heavy_job_wrapper(tmp_path):
         "BC_CONFIG": str(tmp_path / "missing.json"),
         "BC_TRANSCRIBE_WRAPPER": "/bin/echo fixture-lock",
     })
-    job = next(job for job in build_jobs(settings, run=run, now=0) if job.name == "transcribe-signal")
+    job = next(job for job in build_jobs(settings, run=run, now=0) if job.name == "transcribe-whatsapp")
     job.function()
-    assert calls[0][0] == ["/bin/echo", "fixture-lock", __import__("sys").executable, "-m", "transcribe", "--source", "signal"]
+    assert calls[0][0] == ["/bin/echo", "fixture-lock", __import__("sys").executable, "-m", "transcribe", "--source", "whatsapp"]
 
 
 def test_next_nightly_epoch_uses_0317_and_rolls_to_tomorrow_after_it():
@@ -312,11 +312,13 @@ def test_describe_jobs_use_the_shared_heavy_job_wrapper_and_are_not_long_running
     })
     jobs = {job.name: job for job in build_jobs(settings, run=run, now=0)}
     assert jobs["describe-whatsapp"].interval == 3600
-    assert jobs["describe-signal"].interval == 3600
     assert jobs["describe-whatsapp"].long_running is False
-    assert jobs["describe-signal"].long_running is False
-    jobs["describe-signal"].function()
-    assert calls == [["/bin/echo", "fixture-lock", __import__("sys").executable, "-m", "describe", "--source", "signal"]]
+    import daemon as daemon_module
+    if daemon_module.SIGNAL_AVAILABLE:
+        assert jobs["describe-signal"].interval == 3600
+        assert jobs["describe-signal"].long_running is False
+    jobs["describe-whatsapp"].function()
+    assert calls == [["/bin/echo", "fixture-lock", __import__("sys").executable, "-m", "describe", "--source", "whatsapp"]]
 
 
 def test_whatsapp_capture_runs_the_binary_directly_without_a_pty():
@@ -393,7 +395,8 @@ def test_describe_jobs_present_when_enabled(tmp_path):
     import daemon as daemon_module
     names = [j.name for j in daemon_module.build_jobs(_settings_with_describe(True, tmp_path))]
     assert "describe-whatsapp" in names
-    assert "describe-signal" in names
+    if daemon_module.SIGNAL_AVAILABLE:
+        assert "describe-signal" in names
 
 
 def test_intervals_default_to_the_shipped_schedule(tmp_path):
@@ -424,11 +427,14 @@ def test_intervals_can_be_overridden(tmp_path):
         "BC_HEARTBEAT_INTERVAL": "43200",
     }, config_path=tmp_path / "missing.json")
     by_name = {j.name: j.interval for j in daemon_module.build_jobs(settings)}
-    assert by_name["capture-signal"] == 60
-    assert by_name["derive-signal"] == 120
-    assert by_name["transcribe-signal"] == 7200
-    assert by_name["describe-signal"] == 7201
-    assert by_name["heartbeat-signal"] == 43200
+    assert by_name["capture-whatsapp"] == 60
+    assert by_name["derive-whatsapp"] == 120
+    assert by_name["transcribe-whatsapp"] == 7200
+    assert by_name["describe-whatsapp"] == 7201
+    assert by_name["heartbeat-whatsapp"] == 43200
+    if daemon_module.SIGNAL_AVAILABLE:
+        assert by_name["capture-signal"] == 60
+        assert by_name["heartbeat-signal"] == 43200
     # index is not interval-configurable and must keep its own schedule
     assert by_name["index"] == 86400
 
@@ -452,3 +458,59 @@ def test_intervals_round_trip_through_as_env(tmp_path):
     second = Settings.from_environment(first.as_env(), config_path=tmp_path / "missing.json")
     assert second.derive_interval == 120
     assert second.capture_interval == first.capture_interval
+
+
+def test_wacli_capture_job_is_not_long_running(tmp_path):
+    from config import Settings
+    settings = Settings.from_environment(
+        {"BC_CONFIG": str(tmp_path / "missing.json"), "BC_WHATSAPP_BACKEND": "wacli"})
+    jobs = {j.name: j for j in build_jobs(settings, now=0)}
+    assert jobs["capture-whatsapp"].long_running is False
+
+
+def test_run_wacli_capture_invokes_sync_once_with_verified_flags(tmp_path):
+    import daemon as daemon_module
+    from config import Settings
+    settings = Settings.from_environment(
+        {"BC_CONFIG": str(tmp_path / "missing.json"),
+         "BC_WHATSAPP_BACKEND": "wacli",
+         "BC_WACLI_BIN": "/opt/wacli",
+         "BC_WACLI_STORE": str(tmp_path / "wa")})
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="", stderr="")
+
+    daemon_module._run_wacli_capture(settings, run=run)
+    assert calls == [["/opt/wacli", "--store", str(tmp_path / "wa"),
+                      "sync", "--once", "--idle-exit", "30s", "--presence-mode", "quiet"]]
+
+
+def test_build_jobs_omits_every_signal_job_when_source_is_absent(monkeypatch, tmp_path):
+    # A WhatsApp-only install omits sources/signal/; the daemon must not schedule any
+    # *-signal job. Absence is simulated by flipping the module truth the build_jobs branches
+    # read — nothing is uninstalled.
+    import daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "SIGNAL_AVAILABLE", False)
+    names = [j.name for j in daemon_module.build_jobs(_settings_with_describe(True, tmp_path))]
+    assert not any(name.endswith("-signal") for name in names), names
+    for expected in ("capture-whatsapp", "derive-whatsapp", "transcribe-whatsapp",
+                     "describe-whatsapp", "heartbeat-whatsapp", "index"):
+        assert expected in names
+
+
+import daemon as _daemon_module
+import pytest as _pytest
+
+
+@_pytest.mark.skipif(not _daemon_module.SIGNAL_AVAILABLE, reason="signal source not in this tree (public export)")
+def test_build_jobs_keeps_every_signal_job_when_source_is_present(tmp_path):
+    # The dev/test tree has sources.signal installed (SIGNAL_AVAILABLE is True); pin the
+    # contract that the full schedule is unchanged when the package is present.
+    import daemon as daemon_module
+    assert daemon_module.SIGNAL_AVAILABLE is True
+    names = [j.name for j in daemon_module.build_jobs(_settings_with_describe(True, tmp_path))]
+    for expected in ("capture-signal", "derive-signal", "transcribe-signal",
+                     "describe-signal", "heartbeat-signal"):
+        assert expected in names

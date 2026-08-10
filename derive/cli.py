@@ -2,6 +2,8 @@
 import argparse
 import logging
 import os
+
+import config
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +27,8 @@ class Config:
     media_root: Path
     contacts_db: Path | None
     contacts_snapshot: Path | None
+    backend: str = "bridge"
+    wacli_store: Path | None = None
 
 
 def _pick(env, canonical, default):
@@ -33,10 +37,19 @@ def _pick(env, canonical, default):
 
 def resolve_config(source: str, env) -> Config:
     root = Path(_pick(env, "BC_CORPUS_ROOT", os.path.expanduser("~/.local/share/backchannel/corpus")))
+    backend = "bridge"
+    wacli_store = None
     if source == "whatsapp":
-        store_db = Path(_pick(env, "BC_WHATSAPP_STORE", os.path.expanduser("~/store/messages.db")))
-        media_root = Path(_pick(env, "BC_WHATSAPP_MEDIA", str(store_db.parent)))
-        contacts_db = Path(_pick(env, "BC_WHATSAPP_CONTACTS", str(store_db.parent / "whatsapp.db")))
+        if config.resolve_backend(_pick(env, "BC_WHATSAPP_BACKEND", "bridge")) == "wacli":
+            backend = "wacli"
+            wacli_store = Path(_pick(env, "BC_WACLI_STORE", os.path.expanduser("~/.wacli"))).expanduser()
+            store_db = wacli_store / "wacli.db"
+            media_root = wacli_store / "media"
+            contacts_db = None
+        else:
+            store_db = Path(_pick(env, "BC_WHATSAPP_STORE", os.path.expanduser("~/store/messages.db")))
+            media_root = Path(_pick(env, "BC_WHATSAPP_MEDIA", str(store_db.parent)))
+            contacts_db = Path(_pick(env, "BC_WHATSAPP_CONTACTS", str(store_db.parent / "whatsapp.db")))
     else:
         store_root = _pick(env, "BC_SIGNAL_STORE_ROOT", os.path.expanduser("~/.local/share/backchannel/signal"))
         store_db = Path(_pick(env, "BC_SIGNAL_STORE", str(Path(store_root) / "messages.db")))
@@ -44,7 +57,8 @@ def resolve_config(source: str, env) -> Config:
         contacts_db = None
     work = Path(_pick(env, "BC_DERIVE_WORK", str(root / ".derive"))) / source
     return Config(source, store_db, work / "snapshot.db", root, work / "state.json", media_root,
-                  contacts_db, work / "contacts.db" if contacts_db else None)
+                  contacts_db, work / "contacts.db" if contacts_db else None,
+                  backend=backend, wacli_store=wacli_store)
 
 
 def main(argv=None, env=None) -> int:
@@ -58,19 +72,35 @@ def main(argv=None, env=None) -> int:
     if not cfg.store_db.exists():
         raise SystemExit(f"backchannel-derive: {cfg.source} store DB not found at {cfg.store_db}")
 
-    store.snapshot_db(cfg.store_db, cfg.snapshot_db)
-    conn = store.connect_ro(cfg.snapshot_db)
-    try:
-        chats = store.get_chats(conn)
+    wacli_dirty: list = []
+    wacli_max_rowid = None
+    wacli_anchor = None
+    if cfg.backend == "wacli":
+        from derive import wacli
+        wacli_dirty, wacli_max_rowid, wacli_anchor = wacli.project_for_derive(
+            cfg.wacli_store, cfg.snapshot_db, cfg.state_path, args.rebuild)
+        conn = store.connect_ro(cfg.snapshot_db)
+        names = store.load_sender_names(cfg.snapshot_db)
+    else:
+        store.snapshot_db(cfg.store_db, cfg.snapshot_db)
+        conn = store.connect_ro(cfg.snapshot_db)
         names = {}
         if cfg.contacts_db and cfg.contacts_snapshot and cfg.contacts_db.exists():
             store.snapshot_db(cfg.contacts_db, cfg.contacts_snapshot)
             names = store.load_sender_names(cfg.contacts_snapshot)
+    try:
+        chats = store.get_chats(conn)
         slugs = resolve_slugs(cfg.source, chats)
         since = None if args.rebuild else store.load_watermark(cfg.state_path)
         transcripts_since = None if args.rebuild else store.load_transcripts_watermark(cfg.state_path)
         image_text_since = None if args.rebuild else store.load_image_text_watermark(cfg.state_path)
-        affected, max_utc = store.scan_affected(conn, since)
+        if cfg.backend == "wacli":
+            # The rowid cursor is authoritative for wacli (timestamps arrive out of order
+            # during history sync). scan_affected still yields max_utc for a uniform watermark.
+            _, max_utc = store.scan_affected(conn, since)
+            affected = wacli_dirty
+        else:
+            affected, max_utc = store.scan_affected(conn, since)
         transcripts_db = cfg.corpus_root / "transcripts.db"
         image_text_db = cfg.corpus_root / "image_text.db"
         sidecar_affected, max_transcripts_rev, max_image_text_rev = store.scan_sidecar_dirty(
@@ -100,7 +130,8 @@ def main(argv=None, env=None) -> int:
         transcripts_watermark = max_transcripts_rev if max_transcripts_rev is not None else transcripts_since
         image_text_watermark = max_image_text_rev if max_image_text_rev is not None else image_text_since
         if not args.dry_run and watermark is not None:
-            store.save_watermark(cfg.state_path, watermark, transcripts_watermark, image_text_watermark)
+            store.save_watermark(cfg.state_path, watermark, transcripts_watermark, image_text_watermark,
+                                 wacli_rowid=wacli_max_rowid, wacli_anchor=wacli_anchor)
         log.info("backchannel derive %s: %d written, %d skipped", cfg.source, written, skipped)
         return written
     finally:
